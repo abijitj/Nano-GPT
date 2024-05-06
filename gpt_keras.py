@@ -39,3 +39,34 @@ class Head(k.Model):
         v = self.value(x)
         out = wei @ v # (B, T, T) @ (B, T, C) -> (B, T, C)
         return out 
+
+
+class MultiHeadAttention(k.Model): 
+    """ multiple heads of self-attention in parallel """
+
+    def __init__(self, num_heads, head_size): 
+        super().__init__()
+        self.heads = [Head(head_size) for _ in range(num_heads)]
+        self.proj = k.layers.Dense(n_embd, n_embd)
+        self.dropout = k.layers.Dropout(dropout)
+
+    def call(self, x): 
+        out = k.layers.concatenate([h(x) for h in self.heads], axis=-1)
+        out = self.dropout(self.proj(out))
+        return out
+
+
+class FeedForward(k.Model):
+    """ a simple linear layer followed by a non-linearity """
+
+    def __init__(self, n_embd): 
+        super().__init__()
+        self.l1 = k.layers.Dense(n_embd, 4 * n_embd)
+        self.relu = k.layers.Activation('relu')
+        self.l2 = k.layers.Dense(4 * n_embd, n_embd)
+        self.dropout = k.layers.Dropout(dropout)
+    
+    def forward(self, x): 
+        x = self.relu(self.l1(n_embd))
+        x = self.dropout(self.l2(x))
+        return x
