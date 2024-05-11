@@ -1,7 +1,14 @@
 # Importing required libraries
 import numpy as np
+import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import Dense
+
+gpu_devices = tf.config.list_physical_devices('GPU')
+if gpu_devices:
+    print("\nGPU support is available.\n")
+else:
+    print("\nGPU support is not available.\n")
 
 
 # Sample data
