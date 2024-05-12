@@ -103,7 +103,7 @@ class MultiHeadAttention(nn.Module):
         out = self.dropout(self.proj(out))
         return out
 
-class FeedFoward(nn.Module):
+class FeedForward(nn.Module):
     """ a simple linear layer followed by a non-linearity """
 
     def __init__(self, n_embd):
@@ -126,7 +126,7 @@ class Block(nn.Module):
         super().__init__()
         head_size = n_embd // n_head
         self.sa = MultiHeadAttention(n_head, head_size)
-        self.ffwd = FeedFoward(n_embd)
+        self.ffwd = FeedForward(n_embd)
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
@@ -172,8 +172,11 @@ class GPTLanguageModel(nn.Module):
             loss = None
         else:
             B, T, C = logits.shape
+            print(B*T, targets.shape, logits.shape)
             logits = logits.view(B*T, C)
             targets = targets.view(B*T)
+            
+            print(targets, targets.view(B*T))
             loss = F.cross_entropy(logits, targets)
 
         return logits, loss
