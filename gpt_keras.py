@@ -4,18 +4,21 @@ import keras as k
 from tqdm import tqdm
 # hyperparameters
 batch_size = 64 # how many independent sequences will we process in parallel?
-block_size = 128 # what is the maximum context length for predictions?
-max_iters = 10
+block_size = 64 # what is the maximum context length for predictions?
+max_iters = 5
 epochs_per_iter = 500
 eval_interval = 1
 learning_rate = 5e-4 #3e-3
-device = "gpu/0" if tf.config.list_physical_devices('GPU') else "/cpu:0"
+device = "/GPU:0" if tf.config.list_physical_devices('GPU') else "/cpu:0"
 eval_iters = 100
-n_embd = 64
+n_embd = 128
 n_head = 4
 dropout = 0.2
 n_layer = 4
+
+tf.random.set_seed(0)
 # ------------
+
 
 
 np.random.seed(1337)
@@ -44,8 +47,8 @@ def get_batch(split):
     # generate a small batch of data of inputs x and targets y
     data = train_data if split == 'train' else val_data
     ix = np.random.randint(low=0, high=len(data) - block_size, size=batch_size)
-    x = np.stack([data[i:i+block_size] for i in ix])
-    y = np.stack([data[i+1:i+block_size+1] for i in ix])
+    x = np.stack([data[i:i+block_size] for i in ix], dtype=np.float32)
+    y = np.stack([data[i+1:i+block_size+1] for i in ix], dtype=np.float32)
     with tf.device(device):
         x = tf.identity(x)
         y = tf.identity(y) 
@@ -75,25 +78,28 @@ def estimate_loss():
     return out
 
 
-class Head(k.Model): 
+class Head(k.Model):
+    def build(self, input_shape):
+        pass
     def __init__(self, head_size): 
         super().__init__()
-        self.key = k.layers.Dense(head_size, input_shape=(n_embd,), use_bias=False)
+        self.key = k.layers.Dense(head_size, use_bias=False)
 
         self.transpose = k.layers.Permute((2, 1))
 
-        self.query = k.layers.Dense(head_size, input_shape=(n_embd,), use_bias=False)
-        self.value = k.layers.Dense(head_size, input_shape=(n_embd,), use_bias=False)
+        self.query = k.layers.Dense(head_size, use_bias=False)
+        self.value = k.layers.Dense(head_size, use_bias=False)
         
         self.dropout = k.layers.Dropout(dropout)
 
-    def call(self, x): 
+    def call(self, x):
+        
         B, T, C = x.shape
         K = self.key(x) # (B, T, C)
         q = self.query(x) # (B, T, C)
 
         # compute attention scores ("affinities")
-        wei:tf.Tensor = q @ self.transpose(K) * C**-0.5 # (B, T, C)
+        wei = q @ self.transpose(K) * C**-0.5 # (B, T, C)
         #tf.
         #wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
         tril = tf.convert_to_tensor(np.tril(np.ones((T, T), dtype='float_'), 0), dtype=tf.float32)
@@ -101,7 +107,6 @@ class Head(k.Model):
         wei = tf.where(tril[:T, :T] == 0, ninf, wei) # (B, T, T)
         wei = k.activations.softmax(wei) # (B, T, T)
         wei = self.dropout(wei)
-
         # perform weighted aggregation of the values
         v = self.value(x)
         out = wei @ v # (B, T, T) @ (B, T, C) -> (B, T, C)
@@ -110,14 +115,15 @@ class Head(k.Model):
 
 class MultiHeadAttention(k.Model): 
     """ multiple heads of self-attention in parallel """
-
+    def build(self, input_shape):
+        pass
     def __init__(self, num_heads, head_size): 
         super().__init__()
         self.heads = [Head(head_size) for _ in range(num_heads)]
-        self.proj = k.layers.Dense(n_embd, input_shape=(n_embd, ))
+        self.proj = k.layers.Dense(n_embd)
         self.dropout = k.layers.Dropout(dropout)
 
-    def call(self, x): 
+    def call(self, x):
         out = k.layers.concatenate([h(x) for h in self.heads], axis=-1)
         out = self.dropout(self.proj(out))
         return out
@@ -125,12 +131,13 @@ class MultiHeadAttention(k.Model):
 
 class FeedForward(k.Model):
     """ a simple linear layer followed by a non-linearity """
-
+    def build(self, input_shape):
+        pass
     def __init__(self, n_embd): 
         super().__init__()
-        self.l1 = k.layers.Dense(4 * n_embd, input_shape=(n_embd, ), activation='relu')
+        self.l1 = k.layers.Dense(4 * n_embd, activation='relu')
         #self.relu = k.layers.Activation('relu')
-        self.l2 = k.layers.Dense(n_embd, input_shape=(4 * n_embd, ))
+        self.l2 = k.layers.Dense(n_embd)
         self.dropout = k.layers.Dropout(dropout)
     
     def call(self, x): 
@@ -141,7 +148,8 @@ class FeedForward(k.Model):
 
 class Block(k.Model): 
     """ Transformer block: communication followed by computation """
-
+    def build(self, input_shape):
+        pass
     def __init__(self, n_embd, n_head): 
         super().__init__()
         # n_embd: embedding dimension, n_head: the number of heads we'd like
@@ -151,15 +159,16 @@ class Block(k.Model):
         self.ln1 = k.layers.LayerNormalization()
         self.ln2 = k.layers.LayerNormalization()
     
-    def call(self, x): 
+    def call(self, x):
         x = x + self.sa(self.ln1(x))
         x = x + self.ffwd(self.ln2(x))
+        #x = x + self.ln1(x)
         return x
     
 
 class GPTModel(k.Model): 
     """ GPT Decoder-only Model """
-    def build(self):
+    def build(self, input_shape):
         pass
 
     def __init__(self):
@@ -167,11 +176,9 @@ class GPTModel(k.Model):
         # each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = k.layers.Embedding(vocab_size, n_embd)
         self.position_embedding_table = k.layers.Embedding(block_size, n_embd)
-        self.block = k.models.Sequential()
-        for _ in range(n_layer): 
-            self.block.add(Block(n_embd, n_head=n_head))
+        self.blocks = [Block(n_embd, n_head) for _ in range(n_layer)]
         self.ln_f = k.layers.LayerNormalization(n_embd) # final layer norm
-        self.lm_head = k.layers.Dense(vocab_size, input_shape=(n_embd, ))
+        self.lm_head = k.layers.Dense(vocab_size)
     
     def call(self, idx, targets=None): 
         B, T = idx.shape
@@ -181,7 +188,9 @@ class GPTModel(k.Model):
         pos_emb = self.position_embedding_table(np.arange(T))#, device=device)) # (T,C)
         x = tok_emb + pos_emb
 
-        x = self.block(x)
+        for block in self.blocks:
+            x = block(x)
+        
         logits = self.lm_head(x) # (B,T,vocab_size)
         if targets is None:
             #B, T, C = logits.shape
@@ -207,16 +216,15 @@ class GPTModel(k.Model):
             idx_cond = idx[:, -block_size:]
             # get the predictions
             logits, loss = self.call(idx_cond)
-            #print(logits)
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
+
             # apply softmax to get probabilities
+            # warning on the first call b/c the first input is the number 1 dw about it
             probs = k.activations.softmax(logits, axis=-1) # (B, C)
             # sample from the distribution
-            #print(probs.shape)
-            #print(probs, probs.numpy().sum(axis=1))
 
-            # *.9999 to avoid p array being slightly too large
+            # *.9999 to avoid p array being slightly too large and causing an error
             idx_next = np.random.multinomial(1, probs[0,:] * .9999, vocab_size).argmax() # (B, 1)
             
             idx_next = tf.constant(idx_next, dtype=tf.int32, shape=(1, 1))
@@ -236,19 +244,19 @@ with tf.device(device):
         loss=loss_function
     )
 
-for iter in range(max_iters):
-    # every once in a while evaluate the loss on train and val sets
-    if iter % eval_interval == 0:
-        losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+    for iter in range(max_iters):
+        # every once in a while evaluate the loss on train and val sets
+        if iter % eval_interval == 0:
+            losses = estimate_loss()
+            print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
-    # sample a batch of data
-    xb, yb = get_batch('train')
+        # sample a batch of data
+        xb, yb = get_batch('train')
 
-    # evaluate the loss
-    print(xb.shape, yb.shape)
-    history = model.fit(xb, yb, epochs=epochs_per_iter, verbose=1)
+        # evaluate the loss
+        print(xb.shape, yb.shape)
+        history = model.fit(xb, yb, epochs=epochs_per_iter, verbose=1)
 
-# generate from the model
-context = np.zeros((1, 1), dtype='float_')
-print(decode(model.generate(context, max_new_tokens=500)[0].numpy().tolist()))
+    # generate from the model
+    context = np.zeros((1, 1), dtype='float_')
+    print(decode(model.generate(context, max_new_tokens=500)[0].numpy().tolist()))
