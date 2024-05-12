@@ -183,6 +183,8 @@ class GPTModel(k.Model):
         logits = self.lm_head(tok_emb) # (B,T,vocab_size)
         #sprint(type(logits))
         if targets is None:
+            #B, T, C = logits.shape
+            #logits = tf.reshape(logits, (B*T, C))
             loss = None
         else:
             B, T, C = logits.shape
@@ -190,6 +192,7 @@ class GPTModel(k.Model):
             logits = tf.reshape(logits, (B*T, C))
             targets = tf.reshape(targets, (B*T,1))
             
+            print(f"INSIDE: {targets.shape}, {logits.shape}")
             loss = k.losses.SparseCategoricalCrossentropy(from_logits=True)(targets, logits)
             #loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=targets)
             #loss = 1
