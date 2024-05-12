@@ -160,6 +160,7 @@ class BigramLanguageModel(nn.Module):
         x = self.block(x)
         logits = self.lm_head(tok_emb) # (B,T,vocab_size)
 
+        print(targets.shape)
         if targets is None:
             loss = None
         else:

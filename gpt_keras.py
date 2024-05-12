@@ -53,7 +53,7 @@ def get_batch(split):
 
 def estimate_loss():
     out = {}
-    # set model in evaluation mode
+    # set model to evaluation mode
     for layer in model.layers: 
         layer.trainable = False
         layer.training = False
@@ -190,10 +190,12 @@ class GPTModel(k.Model):
             logits = tf.reshape(logits, (B*T, C))
             targets = tf.reshape(targets, (B*T,1))
             
-            loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=targets)
+            loss = k.losses.SparseCategoricalCrossentropy(from_logits=True)(targets, logits)
+            #loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=targets)
             #loss = 1
             #loss = k.losses.CategoricalCrossentropy()(targets, logits)
 
+        #return loss, logits
         return logits, loss
 
     def generate(self, idx, max_new_tokens):
@@ -217,7 +219,8 @@ model = GPTModel()
 
 with tf.device(device):
     #loss = k.losses.CategoricalCrossentropy(from_logits=True, label_smoothing=1)
-    loss = tf.nn.softmax_cross_entropy_with_logits
+    loss = k.losses.SparseCategoricalCrossentropy(from_logits=True)
+    # loss = tf.nn.softmax_cross_entropy_with_logits
     model.compile(
         optimizer=k.optimizers.Adam(learning_rate=learning_rate),
         loss=loss
@@ -233,7 +236,8 @@ for iter in range(max_iters):
     xb, yb = get_batch('train')
 
     # evaluate the loss
-    history = model.fit(xb, yb)
+    print(xb.shape, yb.shape)
+    history = model.fit(xb, yb, epochs=3)
     # logits, loss = model(xb, yb)
     # optimizer.zero_grad(set_to_none=True)
     # loss.backward()
