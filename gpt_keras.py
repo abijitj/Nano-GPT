@@ -63,7 +63,9 @@ def estimate_loss():
         for k in range(eval_iters):
             X, Y = get_batch(split)
             logits, loss = model(X, Y)
-            losses[k] = loss.item()
+            #print(loss, type(loss))
+            #print(loss.numpy(), loss.numpy().shape)
+            losses[k] = loss.numpy().mean()
         out[split] = losses.mean()
     
     # set model back to training mode
@@ -92,10 +94,12 @@ class Head(k.Model):
         q = self.query(x) # (B, T, C)
 
         # compute attention scores ("affinities")
-        wei = q @ self.transpose(K) * C**-0.5 # (B, T, C)
-        #wei = q @ k.backend.permute_dimensions(k, pattern=(0,2,1)) * C**-0.5 
-        #wei = q @ k.layers.Permute((1, 0))(K) * C**-0.5 # (B, T, C) @ (B, C, T) -> (B, T, T)
-        wei = wei.masked_fill(self.tril[:T, :T] == 0, float('inf')) # (B, T, T)
+        wei:tf.Tensor = q @ self.transpose(K) * C**-0.5 # (B, T, C)
+        #tf.
+        #wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
+        tril = tf.convert_to_tensor(np.tril(np.ones((T, T), dtype='float_'), 0), dtype=tf.float32)
+        ninf = tf.constant(float('-inf'), dtype=tf.float32)
+        wei = tf.where(tril[:T, :T] == 0, ninf, wei) # (B, T, T)
         wei = k.activations.softmax(wei) # (B, T, T)
         wei = self.dropout(wei)
 
@@ -131,7 +135,7 @@ class FeedForward(k.Model):
         self.dropout = k.layers.Dropout(dropout)
     
     def call(self, x): 
-        x = self.relu(self.l1(n_embd))
+        x = self.l1(x)
         x = self.dropout(self.l2(x))
         return x
 
@@ -177,14 +181,18 @@ class GPTModel(k.Model):
 
         x = self.block(x)
         logits = self.lm_head(tok_emb) # (B,T,vocab_size)
-
+        #sprint(type(logits))
         if targets is None:
             loss = None
         else:
             B, T, C = logits.shape
-            logits = logits.view(B*T, C)
-            targets = targets.view(B*T)
-            loss = k.losses.CategoricalCrossentropy()(targets, logits)
+            
+            logits = tf.reshape(logits, (B*T, C))
+            targets = tf.reshape(targets, (B*T,1))
+            
+            loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=targets)
+            #loss = 1
+            #loss = k.losses.CategoricalCrossentropy()(targets, logits)
 
         return logits, loss
 
@@ -207,9 +215,12 @@ class GPTModel(k.Model):
     
 model = GPTModel()
 
-with tf.device(device): 
+with tf.device(device):
+    #loss = k.losses.CategoricalCrossentropy(from_logits=True, label_smoothing=1)
+    loss = tf.nn.softmax_cross_entropy_with_logits
     model.compile(
-        optimizer=k.optimizers.Adam(learning_rate=learning_rate)
+        optimizer=k.optimizers.Adam(learning_rate=learning_rate),
+        loss=loss
     )
 
 for iter in range(max_iters):
