@@ -1,15 +1,16 @@
 import numpy as np
 import tensorflow as tf
 import keras as k
-
+from tqdm import tqdm
 # hyperparameters
-batch_size = 32 # how many independent sequences will we process in parallel?
-block_size = 8 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 500
-learning_rate = 1e-2 #3e-3
+batch_size = 64 # how many independent sequences will we process in parallel?
+block_size = 128 # what is the maximum context length for predictions?
+max_iters = 10
+epochs_per_iter = 500
+eval_interval = 1
+learning_rate = 5e-4 #3e-3
 device = "gpu/0" if tf.config.list_physical_devices('GPU') else "/cpu:0"
-eval_iters = 200
+eval_iters = 100
 n_embd = 64
 n_head = 4
 dropout = 0.2
@@ -63,8 +64,6 @@ def estimate_loss():
         for k in range(eval_iters):
             X, Y = get_batch(split)
             logits, loss = model(X, Y)
-            #print(loss, type(loss))
-            #print(loss.numpy(), loss.numpy().shape)
             losses[k] = loss.numpy().mean()
         out[split] = losses.mean()
     
@@ -160,6 +159,9 @@ class Block(k.Model):
 
 class GPTModel(k.Model): 
     """ GPT Decoder-only Model """
+    def build(self):
+        pass
+
     def __init__(self):
         super().__init__()
         # each token directly reads off the logits for the next token from a lookup table
@@ -180,8 +182,7 @@ class GPTModel(k.Model):
         x = tok_emb + pos_emb
 
         x = self.block(x)
-        logits = self.lm_head(tok_emb) # (B,T,vocab_size)
-        #sprint(type(logits))
+        logits = self.lm_head(x) # (B,T,vocab_size)
         if targets is None:
             #B, T, C = logits.shape
             #logits = tf.reshape(logits, (B*T, C))
@@ -192,10 +193,8 @@ class GPTModel(k.Model):
             logits = tf.reshape(logits, (B*T, C))
             targets = tf.reshape(targets, (B*T,1))
             
-            print(f"INSIDE: {targets.shape}, {logits.shape}")
             loss = k.losses.SparseCategoricalCrossentropy(from_logits=True)(targets, logits)
             #loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=targets)
-            #loss = 1
             #loss = k.losses.CategoricalCrossentropy()(targets, logits)
 
         #return loss, logits
@@ -203,30 +202,38 @@ class GPTModel(k.Model):
 
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
-        for _ in range(max_new_tokens):
+        for _ in tqdm(range(max_new_tokens)):
             # crop idx to the last block_size tokens
             idx_cond = idx[:, -block_size:]
             # get the predictions
-            logits, loss = self(idx_cond)
+            logits, loss = self.call(idx_cond)
+            #print(logits)
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
             # apply softmax to get probabilities
-            probs = k.activations.softmax(logits, dim=-1) # (B, C)
+            probs = k.activations.softmax(logits, axis=-1) # (B, C)
             # sample from the distribution
-            idx_next = np.random.multinomial(probs, num_samples=1) # (B, 1)
+            #print(probs.shape)
+            #print(probs, probs.numpy().sum(axis=1))
+
+            # *.9999 to avoid p array being slightly too large
+            idx_next = np.random.multinomial(1, probs[0,:] * .9999, vocab_size).argmax() # (B, 1)
+            
+            idx_next = tf.constant(idx_next, dtype=tf.int32, shape=(1, 1))
+            #print(idx, idx_next)
             # append sampled index to the running sequence
-            idx = k.layers.concatenate((idx, idx_next), dim=1) # (B, T+1)
+            idx = k.layers.concatenate((idx, idx_next), axis=1) # (B, T+1)
         return idx
     
 model = GPTModel()
 
 with tf.device(device):
     #loss = k.losses.CategoricalCrossentropy(from_logits=True, label_smoothing=1)
-    loss = k.losses.SparseCategoricalCrossentropy(from_logits=True)
+    loss_function = k.losses.SparseCategoricalCrossentropy(from_logits=True)
     # loss = tf.nn.softmax_cross_entropy_with_logits
     model.compile(
         optimizer=k.optimizers.Adam(learning_rate=learning_rate),
-        loss=loss
+        loss=loss_function
     )
 
 for iter in range(max_iters):
@@ -240,12 +247,8 @@ for iter in range(max_iters):
 
     # evaluate the loss
     print(xb.shape, yb.shape)
-    history = model.fit(xb, yb, epochs=3)
-    # logits, loss = model(xb, yb)
-    # optimizer.zero_grad(set_to_none=True)
-    # loss.backward()
-    # optimizer.step()
+    history = model.fit(xb, yb, epochs=epochs_per_iter, verbose=1)
 
 # generate from the model
 context = np.zeros((1, 1), dtype='float_')
-print(decode(model.generate(context, max_new_tokens=500)[0].tolist()))
+print(decode(model.generate(context, max_new_tokens=500)[0].numpy().tolist()))
