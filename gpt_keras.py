@@ -6,17 +6,17 @@ from qkeras import QDense
 
 # hyperparameters
 batch_size = 32 # how many independent sequences will we process in parallel?
-block_size = 64 # what is the maximum context length for predictions?
+block_size = 96 # what is the maximum context length for predictions?
 eval_interval = 200
 learning_rate = 1e-3 #3e-3
-epochs = 5
+epochs = 25
 steps_per_epoch = 500
 device = "/GPU:0" if tf.config.list_physical_devices('GPU') else "/cpu:0"
 eval_iters = 30
 n_embd = 256
-n_head = 4
+n_head = 5
 dropout = 0.2
-n_layer = 4
+n_layer = 5
 
 tf.random.set_seed(0)
 # ------------
@@ -58,14 +58,13 @@ def get_batch(split):
     return x, y
 
 def get_training_data():
-    ix = len(train_data) - (block_size + 1)
-    #print([train_data[i:i+block_size] for i in range(ix)])
+    ix = len(train_data) - block_size
+
     x = np.stack([train_data[i:i+block_size] for i in range(ix)], dtype=np.float32)
     y = np.stack([train_data[i+1:i+block_size+1] for i in range(ix)], dtype=np.float32)
     with tf.device(device):
         x = tf.identity(x)
         y = tf.identity(y) 
-        #x, y = x.to(device), y.to(device)
     return x, y
 
 def estimate_loss():
@@ -272,7 +271,7 @@ with tf.device(device):
     #     #print(xb.shape, yb.shape)
     #     history = model.fit(xb, yb, epochs=epochs_per_iter, verbose=0)
     print(x.numpy().shape, y.numpy().shape)
-    model.fit(x, y, epochs=5, batch_size=batch_size, steps_per_epoch=steps_per_epoch, validation_split=.2, validation_batch_size=batch_size, validation_steps=10)
+    model.fit(x, y, epochs=epochs, batch_size=batch_size, steps_per_epoch=steps_per_epoch, validation_split=.2, validation_batch_size=batch_size, validation_steps=10)
     losses = estimate_loss()
     print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
