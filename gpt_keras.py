@@ -3,15 +3,15 @@ import tensorflow as tf
 import keras as k
 from tqdm import tqdm
 # hyperparameters
-batch_size = 64 # how many independent sequences will we process in parallel?
-block_size = 64 # what is the maximum context length for predictions?
-max_iters = 5
-epochs_per_iter = 500
-eval_interval = 1
+batch_size = 32 # how many independent sequences will we process in parallel?
+block_size = 128 # what is the maximum context length for predictions?
+max_iters = 3000
+epochs_per_iter = 1
+eval_interval = 200
 learning_rate = 5e-4 #3e-3
 device = "/GPU:0" if tf.config.list_physical_devices('GPU') else "/cpu:0"
-eval_iters = 100
-n_embd = 128
+eval_iters = 30
+n_embd = 256
 n_head = 4
 dropout = 0.2
 n_layer = 4
@@ -66,7 +66,7 @@ def estimate_loss():
         losses = np.zeros(eval_iters)
         for k in range(eval_iters):
             X, Y = get_batch(split)
-            logits, loss = model(X, Y)
+            logits, loss = model(X, targets=Y, training=False)
             losses[k] = loss.numpy().mean()
         out[split] = losses.mean()
     
@@ -93,7 +93,6 @@ class Head(k.Model):
         self.dropout = k.layers.Dropout(dropout)
 
     def call(self, x):
-        
         B, T, C = x.shape
         K = self.key(x) # (B, T, C)
         q = self.query(x) # (B, T, C)
@@ -180,7 +179,7 @@ class GPTModel(k.Model):
         self.ln_f = k.layers.LayerNormalization(n_embd) # final layer norm
         self.lm_head = k.layers.Dense(vocab_size)
     
-    def call(self, idx, targets=None): 
+    def call(self, idx, training=True, targets=None): 
         B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
@@ -205,9 +204,11 @@ class GPTModel(k.Model):
             loss = k.losses.SparseCategoricalCrossentropy(from_logits=True)(targets, logits)
             #loss = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=targets)
             #loss = k.losses.CategoricalCrossentropy()(targets, logits)
-
+        if not training:
+            return logits, loss
+        return logits
         #return loss, logits
-        return logits, loss
+        #return logits, loss
 
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
@@ -215,7 +216,7 @@ class GPTModel(k.Model):
             # crop idx to the last block_size tokens
             idx_cond = idx[:, -block_size:]
             # get the predictions
-            logits, loss = self.call(idx_cond)
+            logits, loss = self.call(idx_cond, training=False, targets=None)
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
 
@@ -244,7 +245,7 @@ with tf.device(device):
         loss=loss_function
     )
 
-    for iter in range(max_iters):
+    for iter in tqdm(range(max_iters)):
         # every once in a while evaluate the loss on train and val sets
         if iter % eval_interval == 0:
             losses = estimate_loss()
@@ -254,8 +255,10 @@ with tf.device(device):
         xb, yb = get_batch('train')
 
         # evaluate the loss
-        print(xb.shape, yb.shape)
-        history = model.fit(xb, yb, epochs=epochs_per_iter, verbose=1)
+        #print(xb.shape, yb.shape)
+        history = model.fit(xb, yb, epochs=epochs_per_iter, verbose=0)
+    losses = estimate_loss()
+    print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
     # generate from the model
     context = np.zeros((1, 1), dtype='float_')
