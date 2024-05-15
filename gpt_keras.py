@@ -2,13 +2,15 @@ import numpy as np
 import tensorflow as tf
 import keras as k
 from tqdm import tqdm
+from qkeras import QDense
+
 # hyperparameters
 batch_size = 32 # how many independent sequences will we process in parallel?
-block_size = 128 # what is the maximum context length for predictions?
-max_iters = 3000
-epochs_per_iter = 1
+block_size = 64 # what is the maximum context length for predictions?
 eval_interval = 200
-learning_rate = 5e-4 #3e-3
+learning_rate = 1e-3 #3e-3
+epochs = 5
+steps_per_epoch = 500
 device = "/GPU:0" if tf.config.list_physical_devices('GPU') else "/cpu:0"
 eval_iters = 30
 n_embd = 256
@@ -55,6 +57,17 @@ def get_batch(split):
         #x, y = x.to(device), y.to(device)
     return x, y
 
+def get_training_data():
+    ix = len(train_data) - (block_size + 1)
+    #print([train_data[i:i+block_size] for i in range(ix)])
+    x = np.stack([train_data[i:i+block_size] for i in range(ix)], dtype=np.float32)
+    y = np.stack([train_data[i+1:i+block_size+1] for i in range(ix)], dtype=np.float32)
+    with tf.device(device):
+        x = tf.identity(x)
+        y = tf.identity(y) 
+        #x, y = x.to(device), y.to(device)
+    return x, y
+
 def estimate_loss():
     out = {}
     # set model to evaluation mode
@@ -83,12 +96,12 @@ class Head(k.Model):
         pass
     def __init__(self, head_size): 
         super().__init__()
-        self.key = k.layers.Dense(head_size, use_bias=False)
+        self.key = QDense(head_size, use_bias=False)
 
         self.transpose = k.layers.Permute((2, 1))
 
-        self.query = k.layers.Dense(head_size, use_bias=False)
-        self.value = k.layers.Dense(head_size, use_bias=False)
+        self.query = QDense(head_size, use_bias=False)
+        self.value = QDense(head_size, use_bias=False)
         
         self.dropout = k.layers.Dropout(dropout)
 
@@ -119,7 +132,7 @@ class MultiHeadAttention(k.Model):
     def __init__(self, num_heads, head_size): 
         super().__init__()
         self.heads = [Head(head_size) for _ in range(num_heads)]
-        self.proj = k.layers.Dense(n_embd)
+        self.proj = QDense(n_embd)
         self.dropout = k.layers.Dropout(dropout)
 
     def call(self, x):
@@ -134,9 +147,9 @@ class FeedForward(k.Model):
         pass
     def __init__(self, n_embd): 
         super().__init__()
-        self.l1 = k.layers.Dense(4 * n_embd, activation='relu')
+        self.l1 = QDense(4 * n_embd, activation='relu')
         #self.relu = k.layers.Activation('relu')
-        self.l2 = k.layers.Dense(n_embd)
+        self.l2 = QDense(n_embd)
         self.dropout = k.layers.Dropout(dropout)
     
     def call(self, x): 
@@ -177,7 +190,7 @@ class GPTModel(k.Model):
         self.position_embedding_table = k.layers.Embedding(block_size, n_embd)
         self.blocks = [Block(n_embd, n_head) for _ in range(n_layer)]
         self.ln_f = k.layers.LayerNormalization(n_embd) # final layer norm
-        self.lm_head = k.layers.Dense(vocab_size)
+        self.lm_head = QDense(vocab_size)
     
     def call(self, idx, training=True, targets=None): 
         B, T = idx.shape
@@ -245,18 +258,21 @@ with tf.device(device):
         loss=loss_function
     )
 
-    for iter in tqdm(range(max_iters)):
-        # every once in a while evaluate the loss on train and val sets
-        if iter % eval_interval == 0:
-            losses = estimate_loss()
-            print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+    x, y = get_training_data()
+    # for iter in tqdm(range(max_iters)):
+    #     # every once in a while evaluate the loss on train and val sets
+    #     if iter % eval_interval == 0:
+    #         losses = estimate_loss()
+    #         print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
-        # sample a batch of data
-        xb, yb = get_batch('train')
+    #     # sample a batch of data
+    #     xb, yb = get_batch('train')
 
-        # evaluate the loss
-        #print(xb.shape, yb.shape)
-        history = model.fit(xb, yb, epochs=epochs_per_iter, verbose=0)
+    #     # evaluate the loss
+    #     #print(xb.shape, yb.shape)
+    #     history = model.fit(xb, yb, epochs=epochs_per_iter, verbose=0)
+    print(x.numpy().shape, y.numpy().shape)
+    model.fit(x, y, epochs=5, batch_size=batch_size, steps_per_epoch=steps_per_epoch, validation_split=.2, validation_batch_size=batch_size, validation_steps=10)
     losses = estimate_loss()
     print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
